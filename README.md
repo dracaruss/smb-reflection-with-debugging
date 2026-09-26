@@ -1,4 +1,4 @@
-# CVE-2025-33073 Exploit Chain — Debug & Protocol Trace
+# CVE-2025-33073 Exploit Chain - Debug & Protocol Trace
 
 NTLM relay exploit chain with full protocol-level tracing across LDAP, DNS, SMB, and RPC. Built for authorized penetration testing to diagnose why the chain succeeds on some targets and fails on others.
 
