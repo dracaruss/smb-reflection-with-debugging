@@ -1,9 +1,8 @@
 #!/bin/bash
 # ──────────────────────────────────────────────
-# CVE-2025-33073 Exploit Chain — Setup Script
+# smb_no_signing_gg — Setup Script
 # ──────────────────────────────────────────────
-# Creates a Python venv, installs dependencies,
-# and verifies required system tools.
+# Installs everything needed. No manual steps.
 
 set -e
 
@@ -16,7 +15,7 @@ CYAN='\033[96m'
 BOLD='\033[1m'
 RST='\033[0m'
 
-echo -e "${BOLD}${CYAN}CVE-2025-33073 Exploit Chain — Setup${RST}"
+echo -e "${BOLD}${CYAN}smb_no_signing_gg — Setup${RST}"
 echo "──────────────────────────────────────"
 
 # ── Check Python 3 ──
@@ -27,88 +26,132 @@ fi
 PY_VER=$(python3 --version 2>&1)
 echo -e "${GREEN}[+]${RST} ${PY_VER}"
 
+# ── Install system tools automatically ──
+echo ""
+echo -e "${BOLD}Installing system dependencies...${RST}"
+
+if ! command -v dig &>/dev/null; then
+    echo "[*] Installing dnsutils (dig)..."
+    apt install -y dnsutils > /dev/null 2>&1
+    if command -v dig &>/dev/null; then
+        echo -e "${GREEN}[+]${RST} dig installed"
+    else
+        echo -e "${RED}[!]${RST} dig install failed. Run: apt install dnsutils"
+    fi
+else
+    echo -e "${GREEN}[+]${RST} dig already installed"
+fi
+
+if ! command -v tcpdump &>/dev/null; then
+    echo "[*] Installing tcpdump..."
+    apt install -y tcpdump > /dev/null 2>&1
+    if command -v tcpdump &>/dev/null; then
+        echo -e "${GREEN}[+]${RST} tcpdump installed"
+    else
+        echo -e "${YELLOW}[*]${RST} tcpdump install failed (optional, for --capture)"
+    fi
+else
+    echo -e "${GREEN}[+]${RST} tcpdump already installed"
+fi
+
+if ! command -v impacket-ntlmrelayx &>/dev/null; then
+    echo "[*] Installing impacket..."
+    if command -v pipx &>/dev/null; then
+        pipx install impacket > /dev/null 2>&1 && \
+            echo -e "${GREEN}[+]${RST} impacket installed via pipx" || \
+            echo -e "${YELLOW}[*]${RST} pipx install failed, trying pip..."
+    fi
+    # If pipx didn't work or isn't available, try pip
+    if ! command -v impacket-ntlmrelayx &>/dev/null; then
+        pip install impacket --break-system-packages > /dev/null 2>&1 && \
+            echo -e "${GREEN}[+]${RST} impacket installed via pip" || \
+            echo -e "${RED}[!]${RST} impacket install failed. Run: pipx install impacket"
+    fi
+else
+    echo -e "${GREEN}[+]${RST} impacket already installed"
+fi
+
+if ! command -v nxc &>/dev/null; then
+    echo "[*] Installing netexec (nxc)..."
+    if command -v pipx &>/dev/null; then
+        pipx install netexec > /dev/null 2>&1 && \
+            echo -e "${GREEN}[+]${RST} netexec installed via pipx" || \
+            echo -e "${YELLOW}[*]${RST} pipx install failed, trying pip..."
+    fi
+    if ! command -v nxc &>/dev/null; then
+        pip install netexec --break-system-packages > /dev/null 2>&1 && \
+            echo -e "${GREEN}[+]${RST} netexec installed via pip" || \
+            echo -e "${RED}[!]${RST} netexec install failed. Run: pipx install netexec"
+    fi
+else
+    echo -e "${GREEN}[+]${RST} nxc already installed"
+fi
+
 # ── Create venv ──
+echo ""
 if [ -d "${VENV_DIR}" ]; then
     echo -e "${YELLOW}[*]${RST} venv already exists at ${VENV_DIR}"
 else
-    echo -e "[*] Creating virtual environment..."
+    echo "[*] Creating virtual environment..."
     python3 -m venv "${VENV_DIR}"
-    echo -e "${GREEN}[+]${RST} venv created at ${VENV_DIR}"
+    echo -e "${GREEN}[+]${RST} venv created"
 fi
 
-# ── Activate and install deps ──
+# ── Activate and install Python deps ──
 source "${VENV_DIR}/bin/activate"
 
-echo "[*] Upgrading pip..."
-pip install --upgrade pip --quiet
+pip install --upgrade pip --quiet > /dev/null 2>&1
 
-# ── requirements.txt (create if missing) ──
 REQ_FILE="${SCRIPT_DIR}/requirements.txt"
 if [ ! -f "${REQ_FILE}" ]; then
-    echo "[*] Creating requirements.txt..."
     cat > "${REQ_FILE}" <<EOF
 ldap3>=2.9
 dnspython>=2.3
 impacket>=0.11
 pycryptodomex
 EOF
-    echo -e "${GREEN}[+]${RST} requirements.txt created"
 fi
 
-echo "[*] Installing Python dependencies..."
-pip install -r "${REQ_FILE}" --quiet
+echo "[*] Installing Python dependencies into venv..."
+pip install -r "${REQ_FILE}" --quiet > /dev/null 2>&1
 echo -e "${GREEN}[+]${RST} Python dependencies installed"
 
-# ── Check for dnstool.py ──
+# ── dnstool.py ──
 if [ -f "${SCRIPT_DIR}/dnstool.py" ]; then
     echo -e "${GREEN}[+]${RST} dnstool.py found"
 else
-    echo -e "${YELLOW}[*]${RST} dnstool.py not found. Downloading from dirkjanm/krbrelayx..."
+    echo "[*] Downloading dnstool.py from dirkjanm/krbrelayx..."
     if command -v curl &>/dev/null; then
         curl -sL "https://raw.githubusercontent.com/dirkjanm/krbrelayx/master/dnstool.py" \
             -o "${SCRIPT_DIR}/dnstool.py"
     elif command -v wget &>/dev/null; then
         wget -q "https://raw.githubusercontent.com/dirkjanm/krbrelayx/master/dnstool.py" \
             -O "${SCRIPT_DIR}/dnstool.py"
-    else
-        echo -e "${RED}[!] Neither curl nor wget found. Download dnstool.py manually.${RST}"
     fi
-
-    if [ -f "${SCRIPT_DIR}/dnstool.py" ]; then
-        echo -e "${GREEN}[+]${RST} dnstool.py downloaded"
-    fi
+    [ -f "${SCRIPT_DIR}/dnstool.py" ] && \
+        echo -e "${GREEN}[+]${RST} dnstool.py downloaded" || \
+        echo -e "${RED}[!]${RST} Download failed. Get it manually from github.com/dirkjanm/krbrelayx"
 fi
 
-# ── Check system tools ──
+# ── Final verification ──
 echo ""
-echo "Checking system tools..."
-MISSING=0
-
-check_tool() {
-    if command -v "$1" &>/dev/null; then
-        echo -e "  ${GREEN}✓${RST} $1 $(command -v "$1")"
+echo -e "${BOLD}Verifying all tools...${RST}"
+ALL_GOOD=1
+for tool in nxc impacket-ntlmrelayx dig tcpdump ss; do
+    if command -v "$tool" &>/dev/null; then
+        echo -e "  ${GREEN}✓${RST} $tool"
     else
-        echo -e "  ${RED}✗${RST} $1 — $2"
-        MISSING=1
+        echo -e "  ${RED}✗${RST} $tool"
+        ALL_GOOD=0
     fi
-}
-
-check_tool "nxc"                  "Install: pipx install netexec"
-check_tool "impacket-ntlmrelayx"  "Install: pipx install impacket (or pip install impacket)"
-check_tool "dig"                  "Install: apt install dnsutils"
-check_tool "tcpdump"              "Install: apt install tcpdump (optional, for --capture)"
-check_tool "ss"                   "Should be preinstalled (iproute2)"
+done
 
 echo ""
-if [ "${MISSING}" -eq 1 ]; then
-    echo -e "${YELLOW}[*]${RST} Some tools are missing. Install them before running the exploit."
+if [ "${ALL_GOOD}" -eq 1 ]; then
+    echo -e "${GREEN}${BOLD}Setup complete. Everything is ready.${RST}"
 else
-    echo -e "${GREEN}[+]${RST} All tools found."
+    echo -e "${YELLOW}${BOLD}Setup complete with warnings.${RST} Check the missing tools above."
 fi
-
 echo ""
-echo -e "${BOLD}Setup complete.${RST} Activate the venv before running:"
-echo ""
-echo -e "  ${CYAN}source ${VENV_DIR}/bin/activate${RST}"
-echo -e "  ${CYAN}python3 exploit_trace.py --help${RST}"
+echo -e "  ${CYAN}python3 smb_no_signing_gg.py --help${RST}"
 echo ""
