@@ -116,21 +116,28 @@ echo "[*] Installing Python dependencies into venv..."
 pip install -r "${REQ_FILE}" --quiet > /dev/null 2>&1
 echo -e "${GREEN}[+]${RST} Python dependencies installed"
 
-# ── dnstool.py ──
-if [ -f "${SCRIPT_DIR}/dnstool.py" ]; then
-    echo -e "${GREEN}[+]${RST} dnstool.py found"
+# ── dnstool.py (needs full krbrelayx repo for lib/ imports) ──
+KRBRELAYX_DIR="${SCRIPT_DIR}/krbrelayx"
+if [ -f "${SCRIPT_DIR}/dnstool.py" ] && [ -d "${SCRIPT_DIR}/lib" ]; then
+    echo -e "${GREEN}[+]${RST} dnstool.py and lib/ found"
 else
-    echo "[*] Downloading dnstool.py from dirkjanm/krbrelayx..."
-    if command -v curl &>/dev/null; then
-        curl -sL "https://raw.githubusercontent.com/dirkjanm/krbrelayx/master/dnstool.py" \
-            -o "${SCRIPT_DIR}/dnstool.py"
-    elif command -v wget &>/dev/null; then
-        wget -q "https://raw.githubusercontent.com/dirkjanm/krbrelayx/master/dnstool.py" \
-            -O "${SCRIPT_DIR}/dnstool.py"
+    echo "[*] Cloning krbrelayx repo (dnstool.py needs lib/ directory)..."
+    # Clean up any broken standalone dnstool.py from previous setup
+    [ -f "${SCRIPT_DIR}/dnstool.py" ] && rm "${SCRIPT_DIR}/dnstool.py"
+
+    if command -v git &>/dev/null; then
+        git clone --depth 1 https://github.com/dirkjanm/krbrelayx.git "${KRBRELAYX_DIR}" > /dev/null 2>&1
+        if [ -d "${KRBRELAYX_DIR}" ]; then
+            cp "${KRBRELAYX_DIR}/dnstool.py" "${SCRIPT_DIR}/dnstool.py"
+            cp -r "${KRBRELAYX_DIR}/lib" "${SCRIPT_DIR}/lib"
+            rm -rf "${KRBRELAYX_DIR}"
+            echo -e "${GREEN}[+]${RST} dnstool.py and lib/ installed from krbrelayx"
+        else
+            echo -e "${RED}[!]${RST} Git clone failed. Clone manually: git clone https://github.com/dirkjanm/krbrelayx.git"
+        fi
+    else
+        echo -e "${RED}[!]${RST} git not found. Install git and re-run, or clone krbrelayx manually."
     fi
-    [ -f "${SCRIPT_DIR}/dnstool.py" ] && \
-        echo -e "${GREEN}[+]${RST} dnstool.py downloaded" || \
-        echo -e "${RED}[!]${RST} Download failed. Get it manually from github.com/dirkjanm/krbrelayx"
 fi
 
 # ── Final verification ──
