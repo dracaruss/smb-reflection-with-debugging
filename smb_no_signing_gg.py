@@ -399,6 +399,7 @@ class RelayMonitor(threading.Thread):
 # ═══════════════════════════════════════════════
 # Venv / dependency logic
 # ═══════════════════════════════════════════════
+def ensure_venv():
     script_dir = Path(__file__).parent.absolute()
     venv_dir = script_dir / "venv"
     venv_python = venv_dir / "bin" / "python3"
