@@ -15,15 +15,7 @@ The setup script creates a Python venv, installs dependencies (ldap3, impacket, 
 ## Usage
 
 ```bash
-python3 smb_no_signing_gg.py \
-  -u 'CORP\jsmith' \
-  -p 'Summer2025!' \
-  -d 192.168.1.50 \
-  --dns-ip 10.10.10.1 \
-  --dc-fqdn dc01.corp.local \
-  --relay-target srv01.corp.local \
-  --coerce-target 10.10.10.20 \
-  -M PetitPotam
+python3 smb_no_signing_gg.py -u 'CORP\jsmith' -p 'Summer2025!' -d 192.168.1.50 --dns-ip 10.10.10.1 --dc-fqdn dc01.corp.local --relay-target srv01.corp.local --coerce-target 10.10.10.20 -M PetitPotam
 ```
 
 ### Arguments
@@ -61,6 +53,10 @@ A background thread monitors for inbound connections on port 445 and highlights 
 **Default (flag omitted):** SMB to SMB relay. The coerced machine authenticates to your port 445, and ntlmrelayx forwards that auth straight to the relay target's port 445. If the machine account has local admin on the relay target and signing is off, you get a SAM dump.
 
 **`--smb-signing-is-on`:** SMB to LDAPS relay. The coerced machine still authenticates to your port 445 over SMB, but ntlmrelayx cross-protocol relays it to the DC's LDAPS on port 636. It strips the MIC from the NTLM Type 3 message (CVE-2019-1040) so the DC accepts the relayed auth. From LDAPS you modify AD objects (RBCD, shadow credentials) to compromise the target indirectly. This works when the DC has LDAP signing and channel binding at their defaults (not required).
+
+Without the flag, the captured NTLM auth arriving on your port 445 gets forwarded straight to the relay target's port 445 (SMB to SMB). ntlmrelayx authenticates as the machine account on the relay target and runs secretsdump. This only works when SMB signing is off on that relay target.
+
+With the flag, the SMB to SMB path is skipped (signing enforced), and instead ntlmrelayx takes the NTLM auth that arrived over SMB and cross-protocol relays it to the DC's LDAPS on port 636. The MIC in the NTLM Type 3 message is designed to prevent exactly this kind of cross-protocol relay, which is why it uses decoder-it's forked impacket to strip it. Once the LDAPS session is established as the machine account, you can modify AD objects (set up RBCD, add shadow credentials) to compromise the target indirectly rather than dumping SAM directly.
 
 ## Common Failure Points
 
