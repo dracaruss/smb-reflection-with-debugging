@@ -544,8 +544,9 @@ def find_ntlmrelayx():
         names = ["impacket-ntlmrelayx.exe", "ntlmrelayx.exe", "impacket-ntlmrelayx", "ntlmrelayx.py", "ntlmrelayx"]
 
     for name in names:
-        if shutil.which(name):
-            return name
+        found = shutil.which(name)
+        if found:
+            return found
 
     # Check venv Scripts on Windows
     if IS_WINDOWS:
