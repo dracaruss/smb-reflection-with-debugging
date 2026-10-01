@@ -664,7 +664,7 @@ def run_dnstool(user, password, attacker_ip, dns_ip, dc_fqdn):
             log("FAIL", "!!", f"{C.BG_RED}{C.WHITE} User lacks permission to add DNS records {C.RST}", C.RED)
 
         log_result("DNS record addition", False, "dnstool error")
-        sys.exit(1)
+        # sys.exit(1)
     except subprocess.TimeoutExpired:
         log("LDAP", "!!", "dnstool timed out (30s). DC may be unreachable.", C.RED)
         log_result("DNS record addition", False, "timeout")
