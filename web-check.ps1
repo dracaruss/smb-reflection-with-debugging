@@ -13,11 +13,16 @@ Get-Content web-hosts.txt | ForEach-Object {
     foreach ($scheme in @("http","https")) {
         try {
             $r = Invoke-WebRequest -Uri "${scheme}://${host_}/" -UseDefaultCredentials -Method Head -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
-            "$($r.StatusCode) ${scheme}://${host_}"
+            $auth = $r.Headers["WWW-Authenticate"]
+            if (-not $auth) { $auth = "none (auth accepted)" }
+            "$($r.StatusCode) ${scheme}://${host_} | Auth: $auth"
         } catch {
             $code = $_.Exception.Response.StatusCode.value__
             if ($code) {
-                "$code ${scheme}://${host_}"
+                $resp = $_.Exception.Response
+                $auth = $resp.Headers["WWW-Authenticate"]
+                if (-not $auth) { $auth = "not present" }
+                "$code ${scheme}://${host_} | Auth: $auth"
             } else {
                 "ERR ${scheme}://${host_} - $($_.Exception.Message)"
             }
