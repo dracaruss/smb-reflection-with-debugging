@@ -24,8 +24,10 @@ The PowerShell setup script does the same as the Linux version but adapted for W
 ## Usage
 
 ```bash
-python3 smb_no_signing_gg.py -u 'CORP\jsmith' -p 'Summer2025!' -d 192.168.1.50 --dns-ip 10.10.10.1 --dc-fqdn dc01.corp.local --relay-target srv01.corp.local --coerce-target 10.10.10.20 -M PetitPotam
+sudo python3 smb_no_signing_gg.py -u 'CORP\jsmith' -p 'Summer2025!' -d 192.168.1.50 --dns-ip 10.10.10.1 --dc-fqdn dc01.corp.local --relay-target srv01.corp.local --coerce-target 10.10.10.20 -M PetitPotam
 ```
+
+The tool needs root (sudo) because ntlmrelayx binds port 445. It automatically finds nxc and other tools in your user's `~/.local/bin` even under sudo, so you do not need any PATH workarounds.
 
 ### Arguments
 
@@ -43,6 +45,7 @@ python3 smb_no_signing_gg.py -u 'CORP\jsmith' -p 'Summer2025!' -d 192.168.1.50 -
 | `--smb-signing-is-on` | Switches from SMB relay to LDAPS relay using forked impacket with MIC removal (CVE-2019-1040). Use this when the relay target has SMB signing enforced. From LDAPS you can set up RBCD or shadow credentials instead of secretsdump. Leave it off for normal SMB relay. Works when the DC has LDAP signing not required and channel binding not required (the defaults). |
 | `--socks` | Holds the relayed session open as a SOCKS proxy on port 1080 instead of auto-running secretsdump. Route other tools through it with proxychains for manual exploration. |
 | `--capture` | Runs a packet capture in the background. On Linux this uses tcpdump and saves to `/tmp/cve33073_capture.pcap`. On Windows it uses tshark and saves to `%TEMP%\cve33073_capture.pcap`. Open in Wireshark after the run and filter by `smb2`, `ldap`, `dcerpc`, or `dns` to isolate specific stages. |
+| `--relay-debug` | Pass `-debug` to ntlmrelayx so it prints full NTLM message-level output including negotiate flags, challenge values, and server error codes. Use this to diagnose why a relay auth is being rejected. |
 | `--no-debug` | Suppress all debug/trace output |
 | `--skip-dns` | Skip DNS record injection via dnstool and the DNS propagation check entirely. Use this when you have already planted the DNS record manually or through another tool. The script jumps straight to setting up ntlmrelayx. |
 | `--legacy` | Pass the `--legacy` flag through to dnstool.py. Some environments require this flag for dnstool to work correctly with older LDAP configurations. |

