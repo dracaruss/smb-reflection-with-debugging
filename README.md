@@ -2,6 +2,12 @@
 
 NTLM relay exploit chain with full protocol-level tracing across LDAP, DNS, SMB, and RPC. Built for authorized penetration testing to diagnose why the chain succeeds on some targets and fails on others. Cross-platform: runs on both Linux and Windows.
 
+## PREREQUISITES
+Check if 445 is taken by Lanman on Windows AND ALSO if the firewall is BLOCKING 445:
+
+powershell -c "Get-NetFirewallRule -Direction Inbound | Where-Object { ($_ | Get-NetFirewallPortFilter).LocalPort -eq '445' } | Select-Object DisplayName, Action, Enabled | Format-Table"
+
+
 ## Setup (Linux)
 
 ```bash
