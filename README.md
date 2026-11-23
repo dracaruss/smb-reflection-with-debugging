@@ -39,8 +39,8 @@ The tool needs root (sudo) because ntlmrelayx binds port 445. It automatically f
 | `--dns-ip` | Domain Controller IP (used as DNS server) |
 | `--dc-fqdn` | DC fully qualified domain name (e.g. `dc01.corp.local`) |
 | `--dc-ip` | DC IP, alternative to `--dc-fqdn` (one of the two is required) |
-| `--relay-target` | FQDN of the machine the captured NTLM auth is forwarded TO for secretsdump |
-| `--coerce-target` | IP of the machine you trigger to authenticate back to you |
+| `--relay-target` | FQDN of the target |
+| `--coerce-target` | IP of the target |
 | `-M` | Coercion method: `PetitPotam`, `Printerbug`, or `DFSCoerce` |
 | `--smb-signing-is-on` | Switches from SMB relay to LDAPS relay using forked impacket with MIC removal (CVE-2019-1040). Use this when the relay target has SMB signing enforced. From LDAPS you can set up RBCD or shadow credentials instead of secretsdump. Leave it off for normal SMB relay. Works when the DC has LDAP signing not required and channel binding not required (the defaults). |
 | `--socks` | Holds the relayed session open as a SOCKS proxy on port 1080 instead of auto-running secretsdump. Route other tools through it with proxychains for manual exploration. |
